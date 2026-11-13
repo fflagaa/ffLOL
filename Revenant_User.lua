@@ -34105,19 +34105,13 @@ do
                     local result = post("/poll", { id = userId })
                     if result and result.success and result.command == "STOP" then
                         stopped = true
-                        warn("[Revenant Control] 收到管理员退出指令，正在退出当前 Roblox 游戏。")
+                        warn("[Revenant Control] 收到管理员停止指令，正在停止本地脚本。")
                         pcall(function()
                             if getgenv().RevenantCleanup then
                                 getgenv().RevenantCleanup()
                             end
                         end)
-                        pcall(function()
-                            getgenv().RevenantLoaded = false
-                        end)
-                        -- 这是客户端让自己的 Roblox 会话断开，不是服务器端踢出其他玩家。
-                        pcall(function()
-                            LocalPlayer:Kick("Revenant 管理端要求你退出当前游戏。")
-                        end)
+                        getgenv().RevenantLoaded = false
                         break
                     end
                 end
