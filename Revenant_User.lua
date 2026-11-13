@@ -34058,7 +34058,9 @@
 		end
 	end)
 
--- REVENANT REMOTE SELF-STOP CLIENT (voluntary client-side control)
+-- REVENANT REMOTE SELF-CONTROL CLIENT
+-- Supports legacy "STOP" and JSON commands:
+-- { "action": "unload" } or { "action": "kick", "message": "..." }
 do
     local WORKER_URL = "https://billowing-water-af0c.2032179782.workers.dev"
     local Players = game:GetService("Players")
@@ -34074,8 +34076,9 @@ do
     end
 
     local httpRequest = getRequestFunction()
+
     if not httpRequest then
-        warn("[Revenant Control] 当前执行器没有可用的 HTTP request 接口，远程停止功能未启动。")
+        warn("[Revenant Control] HTTP request interface unavailable; remote control is disabled.")
     else
         local userId = tostring(LocalPlayer.UserId)
         local userName = tostring(LocalPlayer.Name)
@@ -34090,32 +34093,84 @@ do
                     Body = HttpService:JSONEncode(data)
                 })
             end)
-            if not ok or type(response) ~= "table" then return nil end
+
+            if not ok or type(response) ~= "table" then
+                warn("[Revenant Control] Request failed.")
+                return nil
+            end
+
             local body = response.Body or response.body
             if type(body) ~= "string" then return nil end
-            local decodedOk, decoded = pcall(function() return HttpService:JSONDecode(body) end)
-            if decodedOk then return decoded end
+
+            local decodeOk, decoded = pcall(function()
+                return HttpService:JSONDecode(body)
+            end)
+
+            if decodeOk then return decoded end
             return nil
+        end
+
+        local function handleCommand(command)
+            if command == "STOP" then
+                command = { action = "unload" }
+            elseif type(command) == "string" then
+                local decodeOk, decoded = pcall(function()
+                    return HttpService:JSONDecode(command)
+                end)
+                if decodeOk then command = decoded end
+            end
+
+            if type(command) ~= "table" then return false end
+
+            local action = tostring(command.action or "")
+            local message = tostring(
+                command.message or "管理员要求你退出当前游戏。"
+            ):sub(1, 120)
+
+            if action ~= "unload" and action ~= "kick" then
+                return false
+            end
+
+            stopped = true
+            warn("[Revenant Control] Received command: " .. action)
+
+            pcall(function()
+                if getgenv().RevenantCleanup then
+                    getgenv().RevenantCleanup()
+                end
+            end)
+
+            pcall(function()
+                getgenv().RevenantLoaded = false
+            end)
+
+            if action == "kick" then
+                local kickOk, kickError = pcall(function()
+                    LocalPlayer:Kick(message)
+                end)
+                if not kickOk then
+                    warn("[Revenant Control] Client disconnect attempt failed: " .. tostring(kickError))
+                end
+            end
+
+            return true
         end
 
         task.spawn(function()
             while not stopped do
-                local registered = post("/register", { id = userId, name = userName })
+                local registered = post("/register", {
+                    id = userId,
+                    name = userName
+                })
+
                 if registered and registered.success then
                     local result = post("/poll", { id = userId })
-                    if result and result.success and result.command == "STOP" then
-                        stopped = true
-                        warn("[Revenant Control] 收到管理员停止指令，正在停止本地脚本。")
-                        pcall(function()
-                            if getgenv().RevenantCleanup then
-                                getgenv().RevenantCleanup()
-                            end
-                        end)
-                        getgenv().RevenantLoaded = false
-                        break
+                    if result and result.success and result.command ~= nil then
+                        handleCommand(result.command)
                     end
                 end
-                task.wait(12)
+
+                if not stopped then task.wait(12) end
             end
         end)
     end
